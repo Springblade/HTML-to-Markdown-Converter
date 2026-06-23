@@ -163,7 +163,7 @@ async def stats():
 
 @app.post("/crawl", response_model=Union[CrawlResponse, DeepCrawlResponse])
 async def crawl(req: CrawlRequest):
-    global _running_counter
+    global _running_counter, crawler_global
 
     if crawler_global is None:
         raise HTTPException(status_code=503, detail="Browser not ready")
@@ -270,7 +270,7 @@ async def crawl(req: CrawlRequest):
         _semaphore.release()
 
         # Restart browser periodically to prevent memory accumulation
-        global _request_count, crawler_global
+        global _request_count  # crawler_global already declared global above
         _request_count += 1
         if _request_count >= BROWSER_MAX_REQUESTS:
             logger.info(f"[BROWSER] Restarting after {_request_count} requests...")
