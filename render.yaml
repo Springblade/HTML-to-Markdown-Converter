@@ -23,6 +23,8 @@ services:
     envVars:
       - key: PORT
         value: 11235
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: /opt/render/project/src/.cache/playwright
       - key: CRAWL4AI_MAX_CONCURRENT
         value: "2"
       - key: CRAWL_MAX_PAGES_TOTAL
