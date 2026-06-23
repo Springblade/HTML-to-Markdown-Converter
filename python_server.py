@@ -90,7 +90,7 @@ class DeepCrawlResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Browser lifecycle management
 # ---------------------------------------------------------------------------
-BROWSER_MAX_REQUESTS = int(os.getenv("BROWSER_MAX_REQUESTS", "50"))
+BROWSER_MAX_REQUESTS = int(os.getenv("BROWSER_MAX_REQUESTS", "20"))
 _request_count = 0
 crawler_global: Optional[AsyncWebCrawler] = None
 _browser_cfg: Optional[BrowserConfig] = None
