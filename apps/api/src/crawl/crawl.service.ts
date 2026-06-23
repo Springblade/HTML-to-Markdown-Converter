@@ -28,7 +28,7 @@ export class CrawlService implements OnModuleInit {
   onModuleInit() {
     const baseURL = process.env.CRAWL4AI_URL ?? 'http://localhost:11235';
     const apiKey = process.env.CRAWL4AI_API_KEY;
-    const timeout = parseInt(process.env.CRAWL4AI_TIMEOUT ?? '120', 10) * 1_000;
+    const timeout = parseInt(process.env.CRAWL4AI_TIMEOUT ?? '300', 10) * 1_000;
 
     const actualTimeout = isNaN(timeout) || timeout <= 0 ? 120_000 : timeout;
 

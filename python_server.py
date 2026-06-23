@@ -102,13 +102,25 @@ async def lifespan(app: FastAPI):
         headless=True,
         extra_args=[
             "--disable-dev-shm-usage",
-            "--js-flags=--max-old-space-size=1536",
+            "--js-flags=--max-old-space-size=512",
             "--disable-gpu",
             "--no-sandbox",
+            "--disable-extensions",
+            "--disable-background-networking",
+            "--disable-default-apps",
+            "--disable-sync",
+            "--disable-translate",
+            "--metrics-recording-only",
+            "--mute-audio",
+            "--no-first-run",
         ],
     )
     crawler_global = AsyncWebCrawler(config=browser_cfg)
-    await crawler_global.start()
+    try:
+        await asyncio.wait_for(crawler_global.start(), timeout=120.0)
+    except asyncio.TimeoutError:
+        print("[crawl4ai-server] Browser initialization timed out after 120s")
+        raise RuntimeError("Browser init timeout")
     print("[crawl4ai-server] Ready on http://0.0.0.0:11235")
     yield
     print("[crawl4ai-server] Shutting down...")
@@ -252,4 +264,4 @@ async def crawl(req: CrawlRequest):
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     port = int(os.getenv("CRAWL4AI_PORT", "11235"))
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info", timeout_keep_alive=60)

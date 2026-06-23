@@ -30,6 +30,8 @@ services:
         value: "10"
       - key: CRAWL_MAX_DEPTH
         value: "3"
+      - key: CRAWL4AI_TIMEOUT
+        value: "300"
 
   # ── NestJS API ─────────────────────────────────────────────────────────────
   - type: web
