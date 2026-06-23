@@ -1,0 +1,11 @@
+{
+  "name": "html-markdown",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n web,api,crawl -c blue,green,yellow \"cd apps/web && pnpm dev\" \"pnpm --filter api start:dev\" \"python python_server.py\""
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.0"
+  }
+}
