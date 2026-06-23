@@ -148,11 +148,59 @@ Returns current concurrency state:
 | `CRAWL_MAX_DEPTH` | `3` | Maximum link depth for deep crawl |
 | `PORT` | `3001` | NestJS server port |
 
-### `apps/web/.env`
+### `apps/api/.env`
 
 | Variable | Default | Description |
 |---|---|---|
-| `NESTJS_API_URL` | `http://localhost:3001` | NestJS API base URL |
+| `CRAWL4AI_URL` | `http://localhost:11235` | Python server base URL |
+| `CRAWL4AI_TIMEOUT` | `120` | Request timeout in seconds |
+| `CRAWL4AI_API_KEY` | _(empty)_ | Optional API key for crawl4ai auth |
+| `CRAWL_MAX_PAGES_TOTAL` | `10` | Hard cap on pages per crawl request |
+| `CRAWL_MAX_DEPTH` | `3` | Maximum link depth for deep crawl |
+| `PORT` | `3001` | NestJS server port |
+
+### `apps/web/.env.local`
+
+| Variable | Default | Description |
+|---|---|---|
+| `NEXT_PUBLIC_API_URL` | `http://localhost:3001` | NestJS API base URL |
+
+## Deployment
+
+This is a multi-service stack. Vercel hosts the Next.js frontend; backend services (NestJS API + Python crawl4ai server) are deployed to Render.com (free tier).
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  Vercel         │     │  Render         │     │  Render         │
+│  Next.js        │────▶│  NestJS API     │────▶│  crawl4ai       │
+│  (Frontend)     │     │  (Port 3001)    │     │  (Port 11235)   │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+```
+
+### Step 1 — Deploy backend to Render
+
+1. Push your code to a GitHub repo.
+2. Go to [render.com/blueprints](https://render.com/blueprints) and click **"New Blueprint Instance"**.
+3. Connect your GitHub account and select your repo — `render.yaml` is auto-detected.
+4. Render will create two services: `crawl4ai-server` and `html-markdown-api`.
+5. Wait for both to deploy. Note the URL of `html-markdown-api` (e.g. `https://html-markdown-api.onrender.com`).
+
+> **Cold start:** On Render's free tier, services sleep after 15 minutes of inactivity. The first request after sleep takes ~30–60 seconds to wake both services.
+
+### Step 2 — Deploy frontend to Vercel
+
+1. Go to [vercel.com](https://vercel.com) and import your GitHub repo.
+2. Set **Root Directory** to `apps/web`.
+3. Set **Build Command** to: `pnpm install && pnpm --filter web build`
+4. Set **Output Directory** to: `.next`
+5. Add environment variable:
+   - **Key:** `NEXT_PUBLIC_API_URL`
+   - **Value:** your Render API URL from Step 1 (e.g. `https://html-markdown-api.onrender.com`)
+6. Click **Deploy**.
+
+### Keep services awake (optional)
+
+Use a free cron job service (e.g. [Kaffeine](https://kaffeine.herokuapp.com/)) to ping your Render services every 10 minutes so they never sleep.
 
 ## Contributing
 

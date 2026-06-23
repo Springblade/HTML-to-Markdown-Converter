@@ -1,0 +1,55 @@
+# Render Blueprint — Infrastructure as Code
+# Deploys both backend services to Render.com (free tier)
+#
+# Usage:
+#   1. Push code to GitHub
+#   2. Go to https://render.com/blueprints → "New Blueprint Instance"
+#   3. Connect your GitHub repo — render.yaml is auto-detected
+#
+# Note: Both services share the same 750h/month free allowance.
+# After 15 min of inactivity they sleep (cold start ~30-60s on first request).
+
+services:
+  # ── Python crawl4ai server ──────────────────────────────────────────────────
+  - type: web
+    name: crawl4ai-server
+    env: python
+    region: oregon
+    plan: free
+    rootDir: .
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn python_server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 11235
+      - key: CRAWL4AI_MAX_CONCURRENT
+        value: "2"
+      - key: CRAWL_MAX_PAGES_TOTAL
+        value: "10"
+      - key: CRAWL_MAX_DEPTH
+        value: "3"
+      - key: CRAWL4AI_API_KEY
+        sync: false
+
+  # ── NestJS API ─────────────────────────────────────────────────────────────
+  - type: web
+    name: html-markdown-api
+    env: node
+    region: oregon
+    plan: free
+    rootDir: apps/api
+    buildCommand: pnpm install && pnpm build
+    startCommand: node dist/main
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 3001
+      - key: CRAWL4AI_URL
+        fromService:
+          name: crawl4ai-server
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: CRAWL_MAX_PAGES_TOTAL
+        value: "10"
+      - key: CRAWL_MAX_DEPTH
+        value: "3"
