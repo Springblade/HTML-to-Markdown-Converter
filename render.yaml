@@ -37,7 +37,7 @@ services:
     region: oregon
     plan: free
     rootDir: apps/api
-    buildCommand: pnpm install && pnpm build
+    buildCommand: cd apps/api && pnpm install && pnpm build
     startCommand: node dist/main
     healthCheckPath: /health
     envVars:
