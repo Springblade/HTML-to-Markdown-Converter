@@ -19,7 +19,6 @@ services:
     rootDir: .
     buildCommand: pip install -r requirements.txt --force-reinstall playwright && playwright install chromium
     startCommand: PLAYWRIGHT_BROWSERS_PATH=/opt/render/project/src/.cache/playwright uvicorn python_server:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /health
     envVars:
       - key: PORT
         value: 11235
@@ -41,7 +40,6 @@ services:
     rootDir: apps/api
     buildCommand: pnpm install && pnpm build
     startCommand: node dist/src/main
-    healthCheckPath: /health
     envVars:
       - key: PORT
         value: 3001
