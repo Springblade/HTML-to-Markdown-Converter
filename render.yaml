@@ -40,7 +40,7 @@ services:
     plan: free
     rootDir: apps/api
     buildCommand: pnpm install && pnpm build
-    startCommand: node dist/main
+    startCommand: node apps/api/dist/main
     healthCheckPath: /health
     envVars:
       - key: PORT
