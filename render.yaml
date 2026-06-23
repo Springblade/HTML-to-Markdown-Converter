@@ -47,6 +47,7 @@ services:
         value: 3001
       - key: CRAWL4AI_URL
         fromService:
+          type: web
           name: crawl4ai-server
           envVarKey: RENDER_EXTERNAL_URL
       - key: CRAWL_MAX_PAGES_TOTAL
