@@ -32,6 +32,8 @@ services:
         value: "3"
       - key: CRAWL4AI_TIMEOUT
         value: "300"
+      - key: BROWSER_MAX_REQUESTS
+        value: "50"
 
   # ── NestJS API ─────────────────────────────────────────────────────────────
   - type: web

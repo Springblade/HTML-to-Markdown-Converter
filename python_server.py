@@ -88,9 +88,12 @@ class DeepCrawlResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Lifespan
+# Browser lifecycle management
 # ---------------------------------------------------------------------------
+BROWSER_MAX_REQUESTS = int(os.getenv("BROWSER_MAX_REQUESTS", "50"))
+_request_count = 0
 crawler_global: Optional[AsyncWebCrawler] = None
+_browser_cfg: Optional[BrowserConfig] = None
 
 
 @asynccontextmanager
@@ -113,8 +116,17 @@ async def lifespan(app: FastAPI):
             "--metrics-recording-only",
             "--mute-audio",
             "--no-first-run",
+            "--disable-media-stream",
+            "--disable-web-security",
+            "--enable-features=NetworkService,NetworkServiceInProcess",
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
         ],
     )
+    global _browser_cfg
+    _browser_cfg = browser_cfg
+    global crawler_global
     crawler_global = AsyncWebCrawler(config=browser_cfg)
     try:
         await asyncio.wait_for(crawler_global.start(), timeout=120.0)
@@ -183,8 +195,7 @@ async def crawl(req: CrawlRequest):
             "exclude_external_links": True,
             "exclude_external_images": False,
             "exclude_social_media_links": True,
-            # Always enable screenshot to populate r.media
-            "screenshot": True,
+            "screenshot": False,
         }
         # Optional css_selector to scope extraction to specific elements
         if req.css_selector:
@@ -257,6 +268,18 @@ async def crawl(req: CrawlRequest):
         async with _counter_lock:
             _running_counter -= 1
         _semaphore.release()
+
+        # Restart browser periodically to prevent memory accumulation
+        global _request_count, crawler_global
+        _request_count += 1
+        if _request_count >= BROWSER_MAX_REQUESTS:
+            logger.info(f"[BROWSER] Restarting after {_request_count} requests...")
+            if crawler_global:
+                await crawler_global.close()
+            if _browser_cfg is not None:
+                crawler_global = AsyncWebCrawler(config=_browser_cfg)
+                await asyncio.wait_for(crawler_global.start(), timeout=120.0)
+            _request_count = 0
 
 
 # ---------------------------------------------------------------------------
