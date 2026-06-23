@@ -17,7 +17,7 @@ services:
     region: oregon
     plan: free
     rootDir: .
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && playwright install chromium
     startCommand: uvicorn python_server:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
@@ -29,8 +29,6 @@ services:
         value: "10"
       - key: CRAWL_MAX_DEPTH
         value: "3"
-      - key: CRAWL4AI_API_KEY
-        sync: false
 
   # ── NestJS API ─────────────────────────────────────────────────────────────
   - type: web
