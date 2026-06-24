@@ -38,7 +38,7 @@ from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
 # ---------------------------------------------------------------------------
 # Concurrency control
 # ---------------------------------------------------------------------------
-MAX_CONCURRENT = int(os.getenv("CRAWL4AI_MAX_CONCURRENT", "2"))
+MAX_CONCURRENT = int(os.getenv("CRAWL4AI_MAX_CONCURRENT", "1"))
 _semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 _running_counter = 0
 _counter_lock = asyncio.Lock()
@@ -102,7 +102,9 @@ async def lifespan(app: FastAPI):
     browser_cfg = BrowserConfig(
         headless=True,
         memory_saving_mode=True,
-        max_pages_before_recycle=8,
+        text_mode=os.getenv("BROWSER_TEXT_MODE", "true").lower() != "false",
+        light_mode=True,
+        max_pages_before_recycle=int(os.getenv("BROWSER_MAX_PAGES_RECYCLE", "5")),
         extra_args=[
             "--disable-dev-shm-usage",
             "--js-flags=--max-old-space-size=256",
@@ -122,6 +124,7 @@ async def lifespan(app: FastAPI):
             "--disable-background-timer-throttling",
             "--disable-backgrounding-occluded-windows",
             "--disable-renderer-backgrounding",
+            "--single-process",
         ],
     )
     global _browser_cfg
@@ -265,6 +268,8 @@ async def crawl(req: CrawlRequest):
             error=str(exc),
         )
     finally:
+        import gc
+        gc.collect()
         async with _counter_lock:
             _running_counter -= 1
         _semaphore.release()

@@ -25,7 +25,11 @@ services:
       - key: PLAYWRIGHT_BROWSERS_PATH
         value: /opt/render/project/src/.cache/playwright
       - key: CRAWL4AI_MAX_CONCURRENT
-        value: "2"
+        value: "1"
+      - key: BROWSER_TEXT_MODE
+        value: "true"
+      - key: BROWSER_MAX_PAGES_RECYCLE
+        value: "5"
       - key: CRAWL_MAX_PAGES_TOTAL
         value: "10"
       - key: CRAWL_MAX_DEPTH
