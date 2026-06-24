@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
+from crawl4ai.async_dispatcher import MemoryAdaptiveDispatcher
 from crawl4ai.deep_crawling import (
     BestFirstCrawlingStrategy,
     FilterChain,
@@ -39,9 +40,17 @@ from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
 # Concurrency control
 # ---------------------------------------------------------------------------
 MAX_CONCURRENT = int(os.getenv("CRAWL4AI_MAX_CONCURRENT", "2"))
+QUEUE_TIMEOUT = float(os.getenv("CRAWL4AI_QUEUE_TIMEOUT", "30"))
 _semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 _running_counter = 0
 _counter_lock = asyncio.Lock()
+
+# ---------------------------------------------------------------------------
+# Memory-adaptive dispatcher configuration
+# ---------------------------------------------------------------------------
+MEMORY_THRESHOLD = float(os.getenv("CRAWL4AI_MEMORY_THRESHOLD", "80.0"))
+MEMORY_TIMEOUT = float(os.getenv("CRAWL4AI_MEMORY_TIMEOUT", "30"))
+V8_MAX_OLD_SPACE_SIZE = int(os.getenv("CRAWL4AI_V8_MAX_OLD_SPACE_SIZE", "1536"))
 
 # ---------------------------------------------------------------------------
 # Deep-crawl configuration
@@ -98,11 +107,16 @@ async def lifespan(app: FastAPI):
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
     global crawler_global
     print("[crawl4ai-server] Starting browser...")
+    dispatcher = MemoryAdaptiveDispatcher(
+        memory_threshold_percent=MEMORY_THRESHOLD,
+        memory_wait_timeout=MEMORY_TIMEOUT,
+        check_interval=1.0,
+    )
     browser_cfg = BrowserConfig(
         headless=True,
         extra_args=[
             "--disable-dev-shm-usage",
-            "--js-flags=--max-old-space-size=1536",
+            f"--js-flags=--max-old-space-size={V8_MAX_OLD_SPACE_SIZE}",
             "--disable-gpu",
             "--no-sandbox",
         ],
@@ -134,6 +148,10 @@ async def stats():
     return {
         "running": running,
         "max_concurrency": MAX_CONCURRENT,
+        "memory_threshold_percent": MEMORY_THRESHOLD,
+        "memory_timeout": MEMORY_TIMEOUT,
+        "v8_max_old_space_size": V8_MAX_OLD_SPACE_SIZE,
+        "queue_timeout": QUEUE_TIMEOUT,
     }
 
 
@@ -147,9 +165,9 @@ async def crawl(req: CrawlRequest):
     use_deep = req.max_depth is not None and req.max_depth > 1
 
     try:
-        await asyncio.wait_for(_semaphore.acquire(), timeout=5.0)
+        await asyncio.wait_for(_semaphore.acquire(), timeout=QUEUE_TIMEOUT)
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=503, detail="Queue full")
+        raise HTTPException(status_code=503, detail="Server at capacity, try again later")
 
     async with _counter_lock:
         _running_counter += 1
@@ -199,7 +217,7 @@ async def crawl(req: CrawlRequest):
             )
         run_cfg = CrawlerRunConfig(**run_cfg_kwargs)
 
-        raw_results = await crawler_global.arun(url=req.url, config=run_cfg)
+        raw_results = await crawler_global.arun(url=req.url, config=run_cfg, dispatcher=dispatcher)
         # BFSDeepCrawlStrategy returns a list; single arun returns one CrawlResult.
         if not isinstance(raw_results, list):
             raw_results = [raw_results]
