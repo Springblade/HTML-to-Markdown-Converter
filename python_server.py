@@ -90,8 +90,6 @@ class DeepCrawlResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Browser lifecycle management
 # ---------------------------------------------------------------------------
-BROWSER_MAX_REQUESTS = int(os.getenv("BROWSER_MAX_REQUESTS", "20"))
-_request_count = 0
 crawler_global: Optional[AsyncWebCrawler] = None
 _browser_cfg: Optional[BrowserConfig] = None
 
@@ -103,9 +101,11 @@ async def lifespan(app: FastAPI):
     print("[crawl4ai-server] Starting browser...")
     browser_cfg = BrowserConfig(
         headless=True,
+        memory_saving_mode=True,
+        max_pages_before_recycle=8,
         extra_args=[
             "--disable-dev-shm-usage",
-            "--js-flags=--max-old-space-size=512",
+            "--js-flags=--max-old-space-size=256",
             "--disable-gpu",
             "--no-sandbox",
             "--disable-extensions",
@@ -268,18 +268,6 @@ async def crawl(req: CrawlRequest):
         async with _counter_lock:
             _running_counter -= 1
         _semaphore.release()
-
-        # Restart browser periodically to prevent memory accumulation
-        global _request_count  # crawler_global already declared global above
-        _request_count += 1
-        if _request_count >= BROWSER_MAX_REQUESTS:
-            logger.info(f"[BROWSER] Restarting after {_request_count} requests...")
-            if crawler_global:
-                await crawler_global.close()
-            if _browser_cfg is not None:
-                crawler_global = AsyncWebCrawler(config=_browser_cfg)
-                await asyncio.wait_for(crawler_global.start(), timeout=120.0)
-            _request_count = 0
 
 
 # ---------------------------------------------------------------------------
