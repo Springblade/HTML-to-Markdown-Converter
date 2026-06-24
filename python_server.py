@@ -11,6 +11,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional, Union
 
+import psutil
+
 logger = logging.getLogger("crawl4ai-server")
 
 import uvicorn
@@ -145,6 +147,8 @@ async def health():
 async def stats():
     async with _counter_lock:
         running = _running_counter
+    process = psutil.Process()
+    memory_info = process.memory_info()
     return {
         "running": running,
         "max_concurrency": MAX_CONCURRENT,
@@ -152,6 +156,9 @@ async def stats():
         "memory_timeout": MEMORY_TIMEOUT,
         "v8_max_old_space_size": V8_MAX_OLD_SPACE_SIZE,
         "queue_timeout": QUEUE_TIMEOUT,
+        "memory_rss_mb": round(memory_info.rss / 1024 / 1024, 1),
+        "memory_vms_mb": round(memory_info.vms / 1024 / 1024, 1),
+        "system_memory_percent": psutil.virtual_memory().percent,
     }
 
 
