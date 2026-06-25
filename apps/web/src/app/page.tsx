@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Header } from '@/components/Header';
 import { CrawlForm } from '@/components/CrawlForm';
 import { MarkdownPreview } from '@/components/MarkdownPreview';
+import { StatsPanel } from '@/components/StatsPanel';
 import { convertToMarkdown } from '@/lib/api-client';
 
 export default function Home() {
@@ -47,6 +48,10 @@ export default function Home() {
 
           <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
             <CrawlForm onSubmit={handleSubmit} isLoading={isLoading} error={error} />
+          </section>
+
+          <section>
+            <StatsPanel isCrawling={isLoading} />
           </section>
 
           <section>

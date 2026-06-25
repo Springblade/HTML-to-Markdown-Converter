@@ -1,5 +1,15 @@
 import { siteConfig } from '@/config/site';
-import { CrawlResult } from './types';
+import { CrawlResult, ServerStats } from './types';
+
+export async function getStats(): Promise<ServerStats> {
+  const response = await fetch('/api/stats');
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch stats');
+  }
+
+  return response.json() as Promise<ServerStats>;
+}
 
 export async function convertToMarkdown(
   payload: { url: string; maxPages: number },

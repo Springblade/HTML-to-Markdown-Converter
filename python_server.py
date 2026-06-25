@@ -50,7 +50,7 @@ _counter_lock = asyncio.Lock()
 # ---------------------------------------------------------------------------
 # Memory-adaptive dispatcher configuration
 # ---------------------------------------------------------------------------
-MEMORY_THRESHOLD = float(os.getenv("CRAWL4AI_MEMORY_THRESHOLD", "80.0"))
+MEMORY_THRESHOLD = float(os.getenv("CRAWL4AI_MEMORY_THRESHOLD", "90.0"))
 MEMORY_TIMEOUT = float(os.getenv("CRAWL4AI_MEMORY_TIMEOUT", "30"))
 V8_MAX_OLD_SPACE_SIZE = int(os.getenv("CRAWL4AI_V8_MAX_OLD_SPACE_SIZE", "1536"))
 
@@ -62,6 +62,13 @@ V8_MAX_OLD_SPACE_SIZE = int(os.getenv("CRAWL4AI_V8_MAX_OLD_SPACE_SIZE", "1536"))
 CRAWL_MAX_PAGES_TOTAL = int(os.getenv("CRAWL_MAX_PAGES_TOTAL", "10"))
 # Maximum link depth to follow during deep crawl.
 CRAWL_MAX_DEPTH = int(os.getenv("CRAWL_MAX_DEPTH", "3"))
+
+# ---------------------------------------------------------------------------
+# Lazy browser initialization configuration
+# ---------------------------------------------------------------------------
+IDLE_TIMEOUT = int(os.getenv("IDLE_TIMEOUT", "60"))  # seconds before browser closes
+last_request_time: float = 0.0
+browser_initializing: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -99,37 +106,99 @@ class DeepCrawlResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Lifespan
+# Global state
 # ---------------------------------------------------------------------------
 crawler_global: Optional[AsyncWebCrawler] = None
+dispatcher_global: Optional[MemoryAdaptiveDispatcher] = None
+_init_lock = asyncio.Lock()
+
+
+async def _ensure_browser() -> bool:
+    """Lazily initialize browser on first request. Returns True if browser is ready."""
+    global crawler_global, last_request_time, browser_initializing
+
+    if crawler_global is not None:
+        last_request_time = asyncio.get_event_loop().time()
+        return True
+
+    async with _init_lock:
+        if crawler_global is not None:  # Another coroutine initialized while waiting
+            last_request_time = asyncio.get_event_loop().time()
+            return True
+
+        if browser_initializing:  # Prevent concurrent init
+            while browser_initializing:
+                await asyncio.sleep(0.1)
+            return crawler_global is not None
+
+        browser_initializing = True
+        try:
+            logger.info("[LAZY_INIT] Starting browser on first request...")
+            browser_cfg = BrowserConfig(
+                headless=True,
+                extra_args=[
+                    "--disable-dev-shm-usage",
+                    f"--js-flags=--max-old-space-size={V8_MAX_OLD_SPACE_SIZE}",
+                    "--disable-gpu",
+                    "--no-sandbox",
+                ],
+            )
+            crawler_global = AsyncWebCrawler(config=browser_cfg)
+            await crawler_global.start()
+            last_request_time = asyncio.get_event_loop().time()
+            logger.info("[LAZY_INIT] Browser started successfully")
+            return True
+        except Exception as e:
+            logger.error(f"[LAZY_INIT] Failed to start browser: {e}")
+            return False
+        finally:
+            browser_initializing = False
+
+
+async def _close_browser():
+    """Close browser if exists."""
+    global crawler_global
+    if crawler_global is not None:
+        logger.info("[CLEANUP] Closing browser after idle timeout")
+        await crawler_global.close()
+        crawler_global = None
+
+
+async def _idle_monitor():
+    """Background task: close browser after idle timeout."""
+    while True:
+        await asyncio.sleep(30)  # Check every 30 seconds
+        if crawler_global is not None:
+            current_time = asyncio.get_event_loop().time()
+            idle_time = current_time - last_request_time
+            if idle_time >= IDLE_TIMEOUT:
+                await _close_browser()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-    global crawler_global
-    print("[crawl4ai-server] Starting browser...")
-    dispatcher = MemoryAdaptiveDispatcher(
+    global dispatcher_global
+    dispatcher_global = MemoryAdaptiveDispatcher(
         memory_threshold_percent=MEMORY_THRESHOLD,
         memory_wait_timeout=MEMORY_TIMEOUT,
         check_interval=1.0,
     )
-    browser_cfg = BrowserConfig(
-        headless=True,
-        extra_args=[
-            "--disable-dev-shm-usage",
-            f"--js-flags=--max-old-space-size={V8_MAX_OLD_SPACE_SIZE}",
-            "--disable-gpu",
-            "--no-sandbox",
-        ],
-    )
-    crawler_global = AsyncWebCrawler(config=browser_cfg)
-    await crawler_global.start()
-    print("[crawl4ai-server] Ready on http://0.0.0.0:11235")
+    logger.info(f"[INIT] Dispatcher created: memory_threshold={MEMORY_THRESHOLD}%, timeout={MEMORY_TIMEOUT}s")
+    logger.info("[INIT] Browser will start lazily on first crawl request")
+    logger.info(f"[crawl4ai-server] Ready on http://0.0.0.0:11235 (idle)")
+
+    # Start idle monitor background task
+    monitor_task = asyncio.create_task(_idle_monitor())
+
     yield
-    print("[crawl4ai-server] Shutting down...")
-    if crawler_global:
-        await crawler_global.close()
+    logger.info("[crawl4ai-server] Shutting down...")
+    monitor_task.cancel()
+    try:
+        await monitor_task
+    except asyncio.CancelledError:
+        pass
+    await _close_browser()
 
 
 app = FastAPI(title="crawl4ai-server", lifespan=lifespan)
@@ -140,7 +209,7 @@ app = FastAPI(title="crawl4ai-server", lifespan=lifespan)
 # ---------------------------------------------------------------------------
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "browser_ready": crawler_global is not None}
 
 
 @app.get("/stats")
@@ -149,6 +218,21 @@ async def stats():
         running = _running_counter
     process = psutil.Process()
     memory_info = process.memory_info()
+
+    # Track child processes (browser instances spawned by crawl4ai)
+    children = process.children(recursive=True)
+    child_memory_mb = 0.0
+    child_count = 0
+    for child in children:
+        try:
+            child_memory_mb += child.memory_info().rss / 1024 / 1024
+            child_count += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    memory_rss_mb = memory_info.rss / 1024 / 1024
+    total_memory_mb = memory_rss_mb + child_memory_mb
+
     return {
         "running": running,
         "max_concurrency": MAX_CONCURRENT,
@@ -156,9 +240,16 @@ async def stats():
         "memory_timeout": MEMORY_TIMEOUT,
         "v8_max_old_space_size": V8_MAX_OLD_SPACE_SIZE,
         "queue_timeout": QUEUE_TIMEOUT,
-        "memory_rss_mb": round(memory_info.rss / 1024 / 1024, 1),
+        "memory_rss_mb": round(memory_rss_mb, 1),
         "memory_vms_mb": round(memory_info.vms / 1024 / 1024, 1),
+        "child_memory_mb": round(child_memory_mb, 1),
+        "child_count": child_count,
+        "total_memory_mb": round(total_memory_mb, 1),
         "system_memory_percent": psutil.virtual_memory().percent,
+        "system_memory_total_gb": round(psutil.virtual_memory().total / (1024**3), 1),
+        "system_memory_used_gb": round(psutil.virtual_memory().used / (1024**3), 1),
+        "browser_ready": crawler_global is not None,
+        "idle_timeout": IDLE_TIMEOUT,
     }
 
 
@@ -166,8 +257,9 @@ async def stats():
 async def crawl(req: CrawlRequest):
     global _running_counter
 
-    if crawler_global is None:
-        raise HTTPException(status_code=503, detail="Browser not ready")
+    # Lazy browser init on first request
+    if not await _ensure_browser():
+        raise HTTPException(status_code=503, detail="Browser failed to start")
 
     use_deep = req.max_depth is not None and req.max_depth > 1
 
@@ -224,7 +316,11 @@ async def crawl(req: CrawlRequest):
             )
         run_cfg = CrawlerRunConfig(**run_cfg_kwargs)
 
-        raw_results = await crawler_global.arun(url=req.url, config=run_cfg, dispatcher=dispatcher)
+        if dispatcher_global is None:
+            raise HTTPException(status_code=503, detail="Dispatcher not initialized")
+
+        logger.info(f"[DEBUG] Starting crawl for {req.url} with dispatcher={type(dispatcher_global).__name__}")
+        raw_results = await crawler_global.arun(url=req.url, config=run_cfg, dispatcher=dispatcher_global)
         # BFSDeepCrawlStrategy returns a list; single arun returns one CrawlResult.
         if not isinstance(raw_results, list):
             raw_results = [raw_results]
@@ -238,10 +334,7 @@ async def crawl(req: CrawlRequest):
                 CrawlResponse(
                     url=r.url,
                     markdown=md,
-                    metadata={
-                        "title": (r.metadata.get("title", "") if r.metadata else ""),
-                        "description": (r.metadata.get("description", "") if r.metadata else ""),
-                    },
+                    metadata=dict(r.metadata) if r.metadata else {},
                     success=bool(getattr(r, "success", True)),
                     media=getattr(r, "media", None),
                     links=getattr(r, "links", None),
