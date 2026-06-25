@@ -2,6 +2,8 @@
 
 A web scraping tool that converts HTML pages to clean Markdown using a headless browser (crawl4ai), with a REST API and a Next.js frontend.
 
+> Also available in: [Tiếng Việt](README.vi.md)
+
 ## Features
 
 - **Single-page crawl** — Convert one URL to Markdown instantly
@@ -153,6 +155,33 @@ Returns current concurrency state:
 | Variable | Default | Description |
 |---|---|---|
 | `NESTJS_API_URL` | `http://localhost:3001` | NestJS API base URL |
+
+## Troubleshooting
+
+### Connection to Python server errors
+
+- Check if Python server is running: `curl http://localhost:11235/health`
+- Check `CRAWL4AI_URL` in `apps/api/.env`
+- Try restarting Python server
+
+### Memory errors
+
+- Reduce `CRAWL4AI_MAX_CONCURRENT` in Python server environment
+- Check `/stats` endpoint for current load
+
+### Port already in use
+
+```bash
+# Kill processes on specific ports
+# Windows:
+.\scripts\kill-ports.ps1
+
+# Linux/Mac:
+kill -9 $(lsof -ti:3000,3001,11235)
+
+# Then restart services
+pnpm dev
+```
 
 ## Contributing
 
