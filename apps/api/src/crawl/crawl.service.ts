@@ -1,39 +1,46 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import axios, { AxiosInstance } from 'axios';
 import {
   CrawlResult,
-  Crawl4aiResponse,
-  Crawl4aiDeepResponse,
   extractTitle,
   buildMarkdown,
   dedupePagesByUrl,
   isRetryableError,
   isRoutableHostname,
 } from './crawl.utils';
+import { Crawl4aiResponse, Crawl4aiDeepResponse } from './types';
+
+function coerceEnvInt(value: string | undefined, fallback: number): number {
+  const parsed = parseInt(value ?? '', 10);
+  return isNaN(parsed) || parsed < 1 ? fallback : parsed;
+}
+
+function collectMediaImages(pages: Crawl4aiResponse[]): { images: string[] } {
+  const images: string[] = pages
+    .flatMap((page) => ((page.media as Record<string, unknown>)?.images as Record<string, unknown>[] | undefined) ?? [])
+    .map((img) => {
+      const alt = img?.alt as string | undefined;
+      const desc = img?.desc as string | undefined;
+      return alt?.trim() || desc?.trim() || null;
+    })
+    .filter((text): text is string => text !== null && text.length > 0);
+  return { images };
+}
 
 @Injectable()
-export class CrawlService implements OnModuleInit {
+export class CrawlService {
   private readonly logger = new Logger(CrawlService.name);
   private client: AxiosInstance;
-
+  private readonly maxPages: number;
   private readonly MAX_RETRIES = 2;
   private readonly BASE_DELAY_MS = 1_000;
   private readonly MAX_DELAY_MS = 10_000;
 
-  // User-facing cap on total pages (root + sub) per request. Sourced from
-  // CRAWL_MAX_PAGES_TOTAL env var (default 10) to match the Python server's Pydantic
-  // constraint. NestJS enforces the same @Max as a UX-level gate.
-  private maxPages: number;
-
-  onModuleInit() {
+  constructor() {
     const baseURL = process.env.CRAWL4AI_URL ?? 'http://localhost:11235';
     const apiKey = process.env.CRAWL4AI_API_KEY;
-    const timeout = parseInt(process.env.CRAWL4AI_TIMEOUT ?? '120', 10) * 1_000;
-
-    const actualTimeout = isNaN(timeout) || timeout <= 0 ? 120_000 : timeout;
-
-    const parsedMaxPages = parseInt(process.env.CRAWL_MAX_PAGES_TOTAL ?? '10', 10);
-    this.maxPages = isNaN(parsedMaxPages) || parsedMaxPages < 1 ? 10 : parsedMaxPages;
+    const timeout = coerceEnvInt(process.env.CRAWL4AI_TIMEOUT, 120) * 1_000;
+    this.maxPages = coerceEnvInt(process.env.CRAWL_MAX_PAGES_TOTAL, 10);
 
     const headers: Record<string, string> = {};
     if (apiKey) {
@@ -42,12 +49,12 @@ export class CrawlService implements OnModuleInit {
 
     this.client = axios.create({
       baseURL,
-      timeout: actualTimeout,
+      timeout,
       headers,
     });
 
     this.logger.log(
-      `CrawlService initialized (crawl4ai=${baseURL}, timeout=${actualTimeout}ms, maxPages=${this.maxPages})`,
+      `CrawlService initialized (crawl4ai=${baseURL}, timeout=${timeout}ms, maxPages=${this.maxPages})`,
     );
   }
 
@@ -118,33 +125,23 @@ export class CrawlService implements OnModuleInit {
     );
 
     const title = dedupedPages[0]?.success ? extractTitle(dedupedPages[0].markdown) : '';
-    const crawledUrls = dedupedPages.filter((p) => p.success).map((p) => p.url);
-    const hasErrors = dedupedPages.some((p) => !p.success);
+    const crawledUrls = dedupedPages.filter((page) => page.success).map((page) => page.url);
+    const hasErrors = dedupedPages.some((page) => !page.success);
 
-    // Collect media from all pages — extract only alt/desc text, no URLs or heavy metadata
-    const mediaImages: string[] = dedupedPages
-      .flatMap(
-        (p) => ((p.media as Record<string, unknown>)?.images as Record<string, unknown>[] | undefined) ?? [],
-      )
-      .map((img) => {
-        const alt = img?.alt as string | undefined;
-        const desc = img?.desc as string | undefined;
-        return alt?.trim() || desc?.trim() || null;
-      })
-      .filter((text): text is string => text !== null && text.length > 0);
-
-    const media = { images: mediaImages };
+    const media = collectMediaImages(dedupedPages);
 
     // Collect links and tables from all pages
     const allLinks: Record<string, unknown>[] = dedupedPages.flatMap(
-      (p) => ((p.links as Record<string, unknown>) ?? []) as Record<string, unknown>[],
+      (page) => ((page.links as Record<string, unknown>) ?? []) as Record<string, unknown>[],
     );
-    const allTables: unknown[] = dedupedPages.flatMap((p) => (p.tables as unknown[]) ?? []);
+    const allTables: unknown[] = dedupedPages.flatMap((page) => (page.tables as unknown[]) ?? []);
 
-    // status_code from the first page (root URL)
     const statusCode = dedupedPages[0]?.status_code;
-
     const crawledUrlsCount = (response as Crawl4aiDeepResponse).crawledUrls;
+
+    this.logger.log(
+      `[DIAG] crawl url=${rootUrl} maxPages=${maxPages} raw=${pages.length} deduped=${dedupedPages.length} successful=${dedupedPages.filter((page) => page.success).length} failed=${dedupedPages.filter((page) => !page.success).length}`,
+    );
 
     return {
       markdown: buildMarkdown(dedupedPages),

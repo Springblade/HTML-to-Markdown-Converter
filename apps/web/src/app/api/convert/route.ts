@@ -4,9 +4,9 @@ import { validateUrl } from '@/lib/validators';
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const requestBody = await request.json();
     const MAX_PAGES = parseInt(process.env.CRAWL_MAX_PAGES_TOTAL ?? '10', 10);
-    const { url, maxPages } = body;
+    const { url, maxPages } = requestBody;
 
     if (!url || typeof url !== 'string') {
       return NextResponse.json(
@@ -38,16 +38,16 @@ export async function POST(request: Request) {
       signal: AbortSignal.timeout(90000),
     });
 
-    const data = await response.json();
+    const apiResponse = await response.json();
 
     if (!response.ok) {
       return NextResponse.json(
-        { message: data.message || `API error: ${response.status}` },
+        { message: apiResponse.message || `API error: ${response.status}` },
         { status: response.status }
       );
     }
 
-    return NextResponse.json(data, { status: 200 });
+    return NextResponse.json(apiResponse, { status: 200 });
   } catch (error) {
     console.error('Proxy error:', error);
     return NextResponse.json(

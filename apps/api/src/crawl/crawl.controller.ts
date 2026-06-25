@@ -32,18 +32,18 @@ export class CrawlController {
       this.logger.log(`Converted ${result.pageCount} page(s) from ${dto.url}`);
       return result;
     } catch (error) {
-      const err = error as { message?: string; name?: string };
+      const crawlError = error as { message?: string; name?: string };
 
-      if (err.message?.includes('crawl4ai unavailable')) {
-        this.logger.error(`crawl4ai service unavailable: ${err.message}`);
-        throw new ServiceUnavailableException(err.message);
+      if (crawlError.message?.includes('crawl4ai unavailable')) {
+        this.logger.error(`crawl4ai service unavailable: ${crawlError.message}`);
+        throw new ServiceUnavailableException(crawlError.message);
       }
 
-      this.logger.error(`Crawl failed for ${dto.url}: ${err.message}`);
+      this.logger.error(`Crawl failed for ${dto.url}: ${crawlError.message}`);
       throw new InternalServerErrorException(
         process.env.NODE_ENV === 'production'
           ? 'Crawl failed. Please try again.'
-          : err.message ?? 'Crawl failed'
+          : crawlError.message ?? 'Crawl failed'
       );
     }
   }

@@ -14,12 +14,17 @@ export interface CrawlResult {
 export interface ServerStats {
   memory: {
     rss_mb: number;
+    child_mb: number;
+    total_mb: number;
     percent: number;
     threshold_percent: number;
+    system_total_gb: number;
+    system_used_gb: number;
   };
   crawler: {
     running: number;
     max_concurrent: number;
+    child_count: number;
   };
   last_crawl?: {
     memory_before_mb: number;

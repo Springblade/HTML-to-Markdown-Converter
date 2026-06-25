@@ -9,6 +9,55 @@ interface MarkdownPreviewProps {
   isEmpty?: boolean;
 }
 
+interface CrawledUrlItemProps {
+  url: string;
+  onCopy: (url: string) => void;
+  copiedUrl: string | null;
+}
+
+function CrawledUrlItem({ url, onCopy, copiedUrl }: CrawledUrlItemProps) {
+  return (
+    <li className="flex items-center gap-2 rounded px-2 py-1 text-xs hover:bg-zinc-100 group">
+      <svg className="h-3.5 w-3.5 shrink-0 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+      </svg>
+      <span className="truncate flex-1 text-zinc-600" title={url}>
+        {url}
+      </span>
+      <button
+        onClick={() => onCopy(url)}
+        className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-zinc-400 hover:text-zinc-600"
+        title="Copy URL"
+      >
+        {copiedUrl === url ? (
+          <svg className="h-3.5 w-3.5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+        ) : (
+          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+        )}
+      </button>
+    </li>
+  );
+}
+
+function CrawledUrlList({ urls, onCopy, copiedUrl }: { urls: string[]; onCopy: (url: string) => void; copiedUrl: string | null }) {
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-medium text-zinc-700">
+        {urls.length} {urls.length === 1 ? 'page' : 'pages'} crawled
+      </p>
+      <ul className="max-h-40 overflow-y-auto space-y-1 rounded-lg border border-zinc-200 bg-zinc-50 p-2">
+        {urls.map((url) => (
+          <CrawledUrlItem key={url} url={url} onCopy={onCopy} copiedUrl={copiedUrl} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function MarkdownPreview({
   markdown,
   crawledUrls,
@@ -84,41 +133,7 @@ export function MarkdownPreview({
   return (
     <div className="space-y-4">
       {crawledUrls && crawledUrls.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-sm font-medium text-zinc-700">
-            {crawledUrls.length} {crawledUrls.length === 1 ? 'page' : 'pages'} crawled
-          </p>
-          <ul className="max-h-40 overflow-y-auto space-y-1 rounded-lg border border-zinc-200 bg-zinc-50 p-2">
-            {crawledUrls.map((url) => (
-              <li
-                key={url}
-                className="flex items-center gap-2 rounded px-2 py-1 text-xs hover:bg-zinc-100 group"
-              >
-                <svg className="h-3.5 w-3.5 shrink-0 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                <span className="truncate flex-1 text-zinc-600" title={url}>
-                  {url}
-                </span>
-                <button
-                  onClick={() => handleCopyUrl(url)}
-                  className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-zinc-400 hover:text-zinc-600"
-                  title="Copy URL"
-                >
-                  {copiedUrl === url ? (
-                    <svg className="h-3.5 w-3.5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                  ) : (
-                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                    </svg>
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <CrawledUrlList urls={crawledUrls} onCopy={handleCopyUrl} copiedUrl={copiedUrl} />
       )}
 
       <div className="flex items-center justify-between">

@@ -13,8 +13,8 @@ export async function GET() {
       );
     }
 
-    const data = await response.json();
-    return NextResponse.json(data);
+    const apiResponse = await response.json();
+    return NextResponse.json(apiResponse);
   } catch (error) {
     console.error('Stats API error:', error);
     return NextResponse.json(

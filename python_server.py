@@ -68,7 +68,7 @@ CRAWL_MAX_DEPTH = int(os.getenv("CRAWL_MAX_DEPTH", "3"))
 # ---------------------------------------------------------------------------
 IDLE_TIMEOUT = int(os.getenv("IDLE_TIMEOUT", "60"))  # seconds before browser closes
 last_request_time: float = 0.0
-browser_initializing: bool = False
+_browser_ready = asyncio.Event()
 
 
 # ---------------------------------------------------------------------------
@@ -115,44 +115,40 @@ _init_lock = asyncio.Lock()
 
 async def _ensure_browser() -> bool:
     """Lazily initialize browser on first request. Returns True if browser is ready."""
-    global crawler_global, last_request_time, browser_initializing
+    global crawler_global, last_request_time
 
     if crawler_global is not None:
         last_request_time = asyncio.get_event_loop().time()
         return True
 
     async with _init_lock:
-        if crawler_global is not None:  # Another coroutine initialized while waiting
+        if crawler_global is not None:
             last_request_time = asyncio.get_event_loop().time()
             return True
 
-        if browser_initializing:  # Prevent concurrent init
-            while browser_initializing:
-                await asyncio.sleep(0.1)
-            return crawler_global is not None
+        if _browser_ready.is_set():
+            return True
 
-        browser_initializing = True
+        logger.info("[LAZY_INIT] Starting browser on first request...")
+        browser_cfg = BrowserConfig(
+            headless=True,
+            extra_args=[
+                "--disable-dev-shm-usage",
+                f"--js-flags=--max-old-space-size={V8_MAX_OLD_SPACE_SIZE}",
+                "--disable-gpu",
+                "--no-sandbox",
+            ],
+        )
         try:
-            logger.info("[LAZY_INIT] Starting browser on first request...")
-            browser_cfg = BrowserConfig(
-                headless=True,
-                extra_args=[
-                    "--disable-dev-shm-usage",
-                    f"--js-flags=--max-old-space-size={V8_MAX_OLD_SPACE_SIZE}",
-                    "--disable-gpu",
-                    "--no-sandbox",
-                ],
-            )
             crawler_global = AsyncWebCrawler(config=browser_cfg)
             await crawler_global.start()
             last_request_time = asyncio.get_event_loop().time()
+            _browser_ready.set()
             logger.info("[LAZY_INIT] Browser started successfully")
             return True
         except Exception as e:
             logger.error(f"[LAZY_INIT] Failed to start browser: {e}")
             return False
-        finally:
-            browser_initializing = False
 
 
 async def _close_browser():
@@ -162,6 +158,7 @@ async def _close_browser():
         logger.info("[CLEANUP] Closing browser after idle timeout")
         await crawler_global.close()
         crawler_global = None
+        _browser_ready.clear()
 
 
 async def _idle_monitor():
@@ -253,11 +250,55 @@ async def stats():
     }
 
 
+def _build_crawl_config(req: CrawlRequest, use_deep: bool) -> CrawlerRunConfig:
+    """Build CrawlerRunConfig from request parameters."""
+    md_generator = DefaultMarkdownGenerator(content_filter=None)
+
+    default_tags = {"nav", "footer", "header", "aside", "script", "style", "noscript", "form"}
+    merged_excluded_tags = list(default_tags | set(req.excluded_tags or []))
+
+    run_cfg_kwargs = {
+        "cache_mode": CacheMode.BYPASS if req.bypass_cache else CacheMode.DEFAULT,
+        "markdown_generator": md_generator,
+        "excluded_tags": merged_excluded_tags,
+        "remove_overlay_elements": True,
+        "exclude_external_links": True,
+        "exclude_external_images": False,
+        "exclude_social_media_links": True,
+        "screenshot": True,
+    }
+
+    if req.css_selector:
+        run_cfg_kwargs["css_selector"] = req.css_selector
+
+    if use_deep:
+        filter_chain = FilterChain([
+            DomainFilter(),
+            ContentTypeFilter(allowed_types=["text/html"]),
+        ])
+        scorer = CompositeScorer(
+            scorers=[
+                PathDepthScorer(optimal_depth=3, weight=0.8),
+                ContentTypeScorer(type_weights={"html": 1.0}, weight=0.9),
+                FreshnessScorer(weight=0.7, current_year=datetime.now().year),
+                DomainAuthorityScorer(domain_weights={}, default_weight=0.5, weight=0.5),
+            ],
+            normalize=True,
+        )
+        run_cfg_kwargs["deep_crawl_strategy"] = BestFirstCrawlingStrategy(
+            max_depth=CRAWL_MAX_DEPTH,
+            max_pages=min(req.max_depth + 1, CRAWL_MAX_PAGES_TOTAL),
+            url_scorer=scorer,
+            filter_chain=filter_chain,
+        )
+
+    return CrawlerRunConfig(**run_cfg_kwargs)
+
+
 @app.post("/crawl", response_model=Union[CrawlResponse, DeepCrawlResponse])
 async def crawl(req: CrawlRequest):
     global _running_counter
 
-    # Lazy browser init on first request
     if not await _ensure_browser():
         raise HTTPException(status_code=503, detail="Browser failed to start")
 
@@ -272,83 +313,41 @@ async def crawl(req: CrawlRequest):
         _running_counter += 1
 
     try:
-        md_generator = DefaultMarkdownGenerator(content_filter=None)
-        # Merge user-provided excluded_tags with server defaults (user list extends defaults)
-        merged_excluded_tags = list({"nav", "footer", "header", "aside", "script", "style", "noscript", "form"})
-        if req.excluded_tags:
-            for tag in req.excluded_tags:
-                if tag not in merged_excluded_tags:
-                    merged_excluded_tags.append(tag)
-        run_cfg_kwargs = {
-            "cache_mode": CacheMode.BYPASS if req.bypass_cache else CacheMode.DEFAULT,
-            "markdown_generator": md_generator,
-            # Noise-stripping defaults merged with user overrides
-            "excluded_tags": merged_excluded_tags,
-            "remove_overlay_elements": True,
-            "exclude_external_links": True,
-            "exclude_external_images": False,
-            "exclude_social_media_links": True,
-            # Always enable screenshot to populate r.media
-            "screenshot": True,
-        }
-        # Optional css_selector to scope extraction to specific elements
-        if req.css_selector:
-            run_cfg_kwargs["css_selector"] = req.css_selector
-        if use_deep:
-            filter_chain = FilterChain([
-                DomainFilter(),
-                ContentTypeFilter(allowed_types=["text/html"]),
-            ])
-            scorer = CompositeScorer(
-                scorers=[
-                    PathDepthScorer(optimal_depth=3, weight=0.8),
-                    ContentTypeScorer(type_weights={"html": 1.0}, weight=0.9),
-                    FreshnessScorer(weight=0.7, current_year=datetime.now().year),
-                    DomainAuthorityScorer(domain_weights={}, default_weight=0.5, weight=0.5),
-                ],
-                normalize=True,
-            )
-            run_cfg_kwargs["deep_crawl_strategy"] = BestFirstCrawlingStrategy(
-                max_depth=CRAWL_MAX_DEPTH,
-                max_pages=min(req.max_depth + 1, CRAWL_MAX_PAGES_TOTAL),
-                url_scorer=scorer,
-                filter_chain=filter_chain,
-            )
-        run_cfg = CrawlerRunConfig(**run_cfg_kwargs)
+        run_cfg = _build_crawl_config(req, use_deep)
 
         if dispatcher_global is None:
             raise HTTPException(status_code=503, detail="Dispatcher not initialized")
 
         logger.info(f"[DEBUG] Starting crawl for {req.url} with dispatcher={type(dispatcher_global).__name__}")
         raw_results = await crawler_global.arun(url=req.url, config=run_cfg, dispatcher=dispatcher_global)
-        # BFSDeepCrawlStrategy returns a list; single arun returns one CrawlResult.
+
         if not isinstance(raw_results, list):
             raw_results = [raw_results]
 
         logger.info(f"[DEBUG] arun returned {len(raw_results)} raw results for {req.url}")
 
-        items: list[CrawlResponse] = []
-        for idx, r in enumerate(raw_results):
-            md = (r.markdown.raw_markdown if r.markdown else "") or ""
-            items.append(
+        crawl_responses: list[CrawlResponse] = []
+        for i, result in enumerate(raw_results):
+            markdown_content = result.markdown.raw_markdown if result.markdown else ""
+            crawl_responses.append(
                 CrawlResponse(
-                    url=r.url,
-                    markdown=md,
-                    metadata=dict(r.metadata) if r.metadata else {},
-                    success=bool(getattr(r, "success", True)),
-                    media=getattr(r, "media", None),
-                    links=getattr(r, "links", None),
-                    status_code=getattr(r, "status_code", None),
-                    tables=getattr(r, "tables", None),
+                    url=result.url,
+                    markdown=markdown_content,
+                    metadata=dict(result.metadata) if result.metadata else {},
+                    success=getattr(result, "success", True),
+                    media=getattr(result, "media", None),
+                    links=getattr(result, "links", None),
+                    status_code=getattr(result, "status_code", None),
+                    tables=getattr(result, "tables", None),
                 )
             )
-            logger.info(f"[DEBUG]   item[{idx}] url={r.url} success={getattr(r, 'success', True)}")
+            logger.info(f"[DEBUG]   item[{i}] url={result.url} success={getattr(result, 'success', True)}")
 
-        logger.info(f"[DEBUG] built {len(items)} items from {len(raw_results)} raw results")
+        logger.info(f"[DEBUG] built {len(crawl_responses)} items from {len(raw_results)} raw results")
 
         if use_deep:
-            return DeepCrawlResponse(success=True, results=items, crawledUrls=len(items))
-        return items[0]
+            return DeepCrawlResponse(success=True, results=crawl_responses, crawledUrls=len(crawl_responses))
+        return crawl_responses[0]
     except Exception as exc:
         if use_deep:
             return DeepCrawlResponse(success=False, results=[], message=str(exc))

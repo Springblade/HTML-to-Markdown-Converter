@@ -51,4 +51,4 @@ export function isRoutableHostname(hostname: string): boolean {
   return true;
 }
 
-export * from './types';
+export type { CrawlResult } from './types';

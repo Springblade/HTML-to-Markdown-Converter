@@ -1,32 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-
-export interface ServerStats {
-  memory: {
-    rss_mb: number;
-    child_mb: number;
-    total_mb: number;
-    percent: number;
-    threshold_percent: number;
-    system_total_gb: number;
-    system_used_gb: number;
-  };
-  crawler: {
-    running: number;
-    max_concurrent: number;
-    child_count: number;
-  };
-  last_crawl?: {
-    memory_before_mb: number;
-    memory_after_mb: number;
-  };
-}
+import { ServerStats } from '@/lib/types';
 
 interface StatsPanelProps {
   isCrawling: boolean;
-  onCrawlStart?: () => void;
-  onCrawlEnd?: () => void;
 }
 
 interface PythonStatsResponse {
@@ -46,33 +24,38 @@ interface PythonStatsResponse {
   system_memory_used_gb: number;
 }
 
+const MEMORY_COLORS = {
+  high: 'bg-red-500',
+  medium: 'bg-amber-500',
+  low: 'bg-emerald-500',
+} as const;
+
 export function StatsPanel({ isCrawling }: StatsPanelProps) {
   const [stats, setStats] = useState<ServerStats | null>(null);
-  const [memoryBefore, setMemoryBefore] = useState<number | null>(null);
 
   useEffect(() => {
     const fetchStats = async () => {
       try {
         const res = await fetch('/api/stats');
         if (res.ok) {
-          const data: PythonStatsResponse = await res.json();
-          const transformed: ServerStats = {
+          const pythonStats: PythonStatsResponse = await res.json();
+          const serverStats: ServerStats = {
             memory: {
-              rss_mb: data.memory_rss_mb,
-              child_mb: data.child_memory_mb,
-              total_mb: data.total_memory_mb,
-              percent: data.system_memory_percent,
-              threshold_percent: data.memory_threshold_percent,
-              system_total_gb: data.system_memory_total_gb,
-              system_used_gb: data.system_memory_used_gb,
+              rss_mb: pythonStats.memory_rss_mb,
+              child_mb: pythonStats.child_memory_mb,
+              total_mb: pythonStats.total_memory_mb,
+              percent: pythonStats.system_memory_percent,
+              threshold_percent: pythonStats.memory_threshold_percent,
+              system_total_gb: pythonStats.system_memory_total_gb,
+              system_used_gb: pythonStats.system_memory_used_gb,
             },
             crawler: {
-              running: data.running,
-              max_concurrent: data.max_concurrency,
-              child_count: data.child_count,
+              running: pythonStats.running,
+              max_concurrent: pythonStats.max_concurrency,
+              child_count: pythonStats.child_count,
             },
           };
-          setStats(transformed);
+          setStats(serverStats);
         }
       } catch {
         // Silently fail - stats are not critical
@@ -84,12 +67,6 @@ export function StatsPanel({ isCrawling }: StatsPanelProps) {
     return () => clearInterval(interval);
   }, []);
 
-  useEffect(() => {
-    if (isCrawling && stats?.memory?.rss_mb) {
-      setMemoryBefore(stats.memory.rss_mb);
-    }
-  }, [isCrawling, stats?.memory?.rss_mb]);
-
   if (!stats?.memory) {
     return (
       <div className="flex items-center justify-center py-2 text-sm text-zinc-400">
@@ -100,11 +77,8 @@ export function StatsPanel({ isCrawling }: StatsPanelProps) {
 
   const { memory, crawler } = stats;
   const memoryMB = Math.round(memory.total_mb);
-  const thresholdColor = memory.percent >= 80
-    ? 'bg-red-500'
-    : memory.percent >= 60
-      ? 'bg-amber-500'
-      : 'bg-emerald-500';
+  const colorKey = memory.percent >= 90 ? 'high' : memory.percent >= 60 ? 'medium' : 'low';
+  const thresholdColor = MEMORY_COLORS[colorKey];
 
   return (
     <div className="flex flex-wrap items-center gap-4 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-2 text-sm">
@@ -141,19 +115,6 @@ export function StatsPanel({ isCrawling }: StatsPanelProps) {
         <span className="text-zinc-500">Threshold:</span>
         <span className="font-medium text-zinc-700">{memory.threshold_percent}%</span>
       </div>
-
-      {/* Last crawl delta */}
-      {memoryBefore && stats.last_crawl && (
-        <>
-          <div className="h-4 w-px bg-zinc-200" />
-          <div className="flex items-center gap-2">
-            <span className="text-zinc-500">Last crawl:</span>
-            <span className="font-medium text-emerald-600">
-              +{Math.round(stats.last_crawl.memory_after_mb - stats.last_crawl.memory_before_mb)} MB
-            </span>
-          </div>
-        </>
-      )}
     </div>
   );
 }
